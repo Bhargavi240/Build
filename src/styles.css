@@ -3122,6 +3122,10 @@ td small {
   background: linear-gradient(135deg, #1a9b91, #137770);
 }
 
+.preset-customer .preset-avatar {
+  background: linear-gradient(135deg, #0284c7, #0369a1);
+}
+
 .preset-info {
   flex: 1;
   min-width: 0;
@@ -3157,6 +3161,11 @@ td small {
 .preset-role-pill.delivery {
   background: #e0f2fe;
   color: #0369a1;
+}
+
+.preset-role-pill.customer {
+  background: #f0fdf4;
+  color: #166534;
 }
 
 .current-badge {

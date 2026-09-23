@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   AlertTriangle, ArrowLeft, ArrowRight, ArrowUpRight, Banknote, Bell, Boxes, Check,
   CheckCircle2, ChevronDown, ChevronRight, Clock3, Copy, CreditCard,
@@ -7,6 +7,10 @@ import {
   SlidersHorizontal, Smartphone, Star, Truck, User, UserCheck, Users, X, Zap
 } from 'lucide-react';
 import './styles.css';
+import { db, subscribeDB } from './services/db';
+import DeliveryPartnerApp from './delivery/DeliveryPartnerApp';
+import AccessDenied from './delivery/AccessDenied';
+import CustomerApp from './customer/CustomerApp';
 
 const initialUsers = [
   {
@@ -17,6 +21,19 @@ const initialUsers = [
     avatar: 'AU',
     title: 'Operations & General Manager',
     phone: '+91 98765 43210'
+  },
+  {
+    id: 'DP-408',
+    name: 'Bhargavi',
+    email: 'bhargavi@buildstock.in',
+    role: 'delivery',
+    avatar: 'BG',
+    title: 'Senior Delivery Partner',
+    phone: '+91 98480 99881',
+    vehicle: 'AP 16 CK 3341 (EV Cargo Scooter)',
+    rating: '4.9 ★',
+    monthlyTarget: 90,
+    status: 'Active on Shift'
   },
   {
     id: 'DP-402',
@@ -43,6 +60,26 @@ const initialUsers = [
     rating: '4.8 ★',
     monthlyTarget: 30,
     status: 'Active on Shift'
+  },
+  {
+    id: 'CUST-001',
+    name: 'Rajesh Kumar',
+    email: 'rajesh@buildstock.in',
+    role: 'customer',
+    avatar: 'RK',
+    title: 'Civil Contractor & Builder',
+    phone: '+91 98480 22338',
+    address: '12-4-89 MG Road, Benz Circle, Vijayawada, AP - 520010'
+  },
+  {
+    id: 'CUST-002',
+    name: 'Priya Sharma',
+    email: 'priya@buildstock.in',
+    role: 'customer',
+    avatar: 'PS',
+    title: 'Architect & Interior Designer',
+    phone: '+91 98450 12345',
+    address: 'Plot 18, Dwaraka Nagar, Visakhapatnam, AP'
   }
 ];
 
@@ -61,6 +98,24 @@ const initialProducts = [
 ];
 
 const initialOrders = [
+  {
+    id: 'ORD-1025',
+    displayId: '#ORD1025',
+    customer: 'Ravi Kumar',
+    product: 'Cement Bags (5), TMT Steel (10), Sand (2)',
+    itemsList: [
+      { name: 'Cement Bags', qty: 5, unit: 'Bags' },
+      { name: 'TMT Steel Bars', qty: 10, unit: 'PCS' },
+      { name: 'Sand 50kg', qty: 2, unit: 'Bags' }
+    ],
+    quantity: 17,
+    date: '22 Sep 2026',
+    delivery: '22 Sep 2026',
+    amount: 1250,
+    status: 'Ready for Dispatch',
+    address: '12-4-89 MG Road, Benz Circle, Vijayawada, AP - 520010',
+    phone: '+91 98480 22338'
+  },
   {
     id: 'ORD-1001',
     customer: 'ABC Industries',
@@ -193,22 +248,31 @@ const money = (value) => `₹${Number(value).toLocaleString('en-IN')}`;
 const statusClass = (status) => status.toLowerCase().replaceAll(' ', '-');
 
 export default function App() {
+  const users = db.getUsers();
   const [currentUser, setCurrentUser] = useState(() => {
-    try {
-      const saved = localStorage.getItem('buildstock_user');
-      return saved ? JSON.parse(saved) : initialUsers[0];
-    } catch {
-      return initialUsers[0];
-    }
+    return db.getCurrentUser() || users[0];
   });
 
-  const [page, setPage] = useState(() => (currentUser?.role === 'delivery' ? 'DeliveryHome' : 'Dashboard'));
+  const [hash, setHash] = useState(() => {
+    if (typeof window !== 'undefined' && window.location.hash) {
+      return window.location.hash;
+    }
+    if (currentUser?.role === 'customer') return '#/customer';
+    if (currentUser?.role === 'delivery') return '#/delivery';
+    return '#/admin';
+  });
+
+  const [page, setPage] = useState(() => {
+    if (currentUser?.role === 'customer') return 'CustomerHome';
+    if (currentUser?.role === 'delivery') return 'DeliveryHome';
+    return 'Dashboard';
+  });
   const [customers, setCustomers] = useState(initialCustomers);
-  const [products, setProducts] = useState(initialProducts);
-  const [orders, setOrders] = useState(initialOrders);
+  const [products, setProducts] = useState(() => db.getProducts());
+  const [orders, setOrders] = useState(() => db.getOrders());
   const [dispatches, setDispatches] = useState(initialDispatches);
   const [activities, setActivities] = useState(initialActivities);
-  const [personalHistory, setPersonalHistory] = useState(initialPersonalHistory);
+  const [personalHistory, setPersonalHistory] = useState(() => db.getPersonalHistory());
   const [drilldownPartner, setDrilldownPartner] = useState(null);
 
   const [query, setQuery] = useState('');
@@ -218,37 +282,121 @@ export default function App() {
   const [notice, setNotice] = useState('');
 
   // Delivery module state
-  const [deliveryModal, setDeliveryModal] = useState(null); // { step: 'detail' | 'payment', order: {...} }
+  const [deliveryModal, setDeliveryModal] = useState(null);
 
   const notify = (message) => {
     setNotice(message);
     window.setTimeout(() => setNotice(''), 2800);
   };
 
+  // Hash route listener
+  useEffect(() => {
+    const handleHashChange = () => {
+      const h = window.location.hash || '';
+      setHash(h);
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  // Database subscriber to keep Admin, Customer, and Delivery state in sync
+  useEffect(() => {
+    const unsub = subscribeDB((type, data) => {
+      setOrders(db.getOrders());
+      setProducts(db.getProducts());
+      setPersonalHistory(db.getPersonalHistory());
+
+      if (type === 'order_created' && data) {
+        setActivities((prev) => [
+          {
+            id: `act-${Date.now()}`,
+            icon: 'shopping-cart',
+            title: `Order ${data.displayId || data.id} Placed`,
+            detail: `${data.customer} · ${money(data.amount)} (Ready for Dispatch)`,
+            time: 'Just now'
+          },
+          ...prev
+        ]);
+        setDispatches((prev) => [
+          {
+            id: `DSP-${Date.now().toString().slice(-4)}`,
+            order: data.id,
+            customer: data.customer,
+            products: data.product,
+            date: data.date || '22 Sep 2026',
+            delivery: 'Today (Express)',
+            status: 'Ready for Dispatch'
+          },
+          ...prev
+        ]);
+      } else if (type === 'order_locked' && data) {
+        setActivities((prev) => [
+          {
+            id: `act-${Date.now()}`,
+            icon: 'truck',
+            title: `${data.displayId || data.id} Claimed`,
+            detail: `Locked by ${data.assignedTo || 'Partner'} for delivery`,
+            time: 'Just now'
+          },
+          ...prev
+        ]);
+      } else if (type === 'order_delivered' && data) {
+        setActivities((prev) => [
+          {
+            id: `act-${Date.now()}`,
+            icon: 'check',
+            title: `${data.displayId || data.id} Delivered`,
+            detail: `${data.customer} · ${money(data.amount)} via ${data.paymentMethod || 'Paid'} (${data.assignedTo || 'Partner'})`,
+            time: 'Just now'
+          },
+          ...prev
+        ]);
+        setDispatches((prev) =>
+          prev.map((d) => (d.order === data.id ? { ...d, status: 'Delivered' } : d))
+        );
+      }
+    });
+    return unsub;
+  }, []);
+
   const handleLogin = (user) => {
     setCurrentUser(user);
-    try {
-      localStorage.setItem('buildstock_user', JSON.stringify(user));
-    } catch {}
-    if (user.role === 'delivery') {
+    db.setCurrentUser(user);
+    if (user.role === 'customer') {
+      window.location.hash = '#/customer';
+      setHash('#/customer');
+      setPage('CustomerHome');
+    } else if (user.role === 'delivery') {
+      window.location.hash = '#/delivery';
+      setHash('#/delivery');
       setPage('DeliveryHome');
     } else {
+      window.location.hash = '#/admin';
+      setHash('#/admin');
       setPage('Dashboard');
     }
-    notify(`Signed in as ${user.name} (${user.role === 'admin' ? 'Admin / Manager' : 'Delivery Partner'})`);
+    const roleLabel = user.role === 'admin' ? 'Admin / Manager' : user.role === 'delivery' ? 'Delivery Partner' : 'Customer';
+    notify(`Signed in as ${user.name} (${roleLabel})`);
   };
 
   const handleLogout = () => {
     setCurrentUser(null);
-    try {
-      localStorage.removeItem('buildstock_user');
-    } catch {}
+    db.setCurrentUser(null);
+    window.location.hash = '#/login';
+    setHash('#/login');
     setPage('Login');
     notify('Signed out successfully');
   };
 
-  // ROUTE GUARD: Delivery partner is restricted strictly to DeliveryHome!
+  // ROUTE GUARD: Role-based navigation restrictions
   const navigate = (nextPage) => {
+    if (currentUser?.role === 'customer') {
+      if (nextPage !== 'CustomerHome') {
+        notify('Customer portal access only.');
+        setPage('CustomerHome');
+        return;
+      }
+    }
     if (currentUser?.role === 'delivery') {
       if (nextPage !== 'DeliveryHome') {
         notify('Access restricted: Delivery partners can only access Delivery Home.');
@@ -264,7 +412,7 @@ export default function App() {
   };
 
   const lowStock = products.filter((product) => product.stock <= product.minimum);
-  const readyOrders = orders.filter((o) => o.status === 'Ready for Dispatch' || o.status === 'Ready for dispatch');
+  const readyOrders = orders.filter((o) => o.status === 'Ready for Dispatch' || o.status === 'Ready for dispatch' || o.status === 'Ready for Delivery');
 
   const searchResults = query.length > 1 ? [
     ...customers.filter((item) => `${item.name} ${item.company}`.toLowerCase().includes(query.toLowerCase())).map((item) => ({ type: 'Customer', label: item.name, sub: item.company, target: 'Customers' })),
@@ -287,82 +435,121 @@ export default function App() {
   const advanceOrder = (order) => {
     const statuses = ['Pending', 'Confirmed', 'Processing', 'Ready for Dispatch', 'Dispatched', 'Delivered'];
     const next = statuses[Math.min(statuses.indexOf(order.status) + 1, statuses.length - 1)];
-    setOrders((items) => items.map((item) => item.id === order.id ? { ...item, status: next } : item));
+    const updated = orders.map((item) => item.id === order.id ? { ...item, status: next } : item);
+    setOrders(updated);
+    db.setOrders(updated);
     notify(`${order.id} moved to ${next}`);
   };
 
   // Delivery completion handler (Delivered button -> Payment choice -> Complete)
   const completeDelivery = (order, paymentMethod) => {
-    const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const nowDate = 'Today';
-    const partnerId = currentUser?.role === 'delivery' ? currentUser.id : 'DP-402';
-    const partnerName = currentUser?.role === 'delivery' ? currentUser.name : 'Alex Kumar';
-
-    // 1. Update order status to Delivered
-    setOrders((prev) =>
-      prev.map((o) => (o.id === order.id ? { ...o, status: 'Delivered', paymentMethod, partnerId, partnerName } : o))
-    );
-
-    // 2. Update dispatch record if exists
-    setDispatches((prev) =>
-      prev.map((d) => (d.order === order.id ? { ...d, status: 'Delivered', partnerId, partnerName } : d))
-    );
-
-    // 3. Log to Quick Activity
-    const newActivity = {
-      id: `act-${Date.now()}`,
-      icon: 'check',
-      title: `${order.id} Delivered`,
-      detail: `${order.customer} · ${money(order.amount)} via ${paymentMethod} (${partnerName})`,
-      time: `${nowTime}`
-    };
-    setActivities((prev) => [newActivity, ...prev]);
-
-    // 4. Add to delivery person's personal record
-    const newPersonalEntry = {
-      id: order.id,
-      partnerId,
-      partnerName,
-      customer: order.customer,
-      product: order.product,
-      quantity: order.quantity,
-      amount: order.amount,
-      deliveredAt: `${nowDate}, ${nowTime}`,
-      paymentMethod,
-      address: order.address || 'Customer site, Vijayawada'
-    };
-    setPersonalHistory((prev) => [newPersonalEntry, ...prev]);
-
-    // 5. Close modals & notify
+    db.deliverOrder(order.id, currentUser || { id: 'DP-402', name: 'Alex Kumar' }, paymentMethod);
     setDeliveryModal(null);
     notify(`Order ${order.id} delivered! ${money(order.amount)} received via ${paymentMethod}`);
   };
 
   // If user is logged out, render Login Screen
-  if (!currentUser || page === 'Login') {
-    return <LoginScreen onLogin={handleLogin} users={initialUsers} />;
+  if (!currentUser || page === 'Login' || hash === '#/login') {
+    return <LoginScreen onLogin={handleLogin} users={users} />;
   }
 
-  // If role is DELIVERY PARTNER: render ONLY the restricted Delivery Partner Home Mini-App!
-  if (currentUser.role === 'delivery') {
+  // ROUTE GUARD: If role is CUSTOMER and hash is #/admin: AccessDenied screen!
+  if (currentUser?.role === 'customer' && (hash === '#/admin' || hash.startsWith('#/admin'))) {
     return (
-      <DeliveryPartnerApp
-        currentUser={currentUser}
-        orders={orders}
-        personalHistory={personalHistory}
-        activities={activities}
-        deliveryModal={deliveryModal}
-        setDeliveryModal={setDeliveryModal}
-        completeDelivery={completeDelivery}
-        handleLogout={handleLogout}
-        onSwitchUser={() => setModal('switchUser')}
-        notify={notify}
-        notice={notice}
-        modal={modal}
-        setModal={setModal}
-        initialUsers={initialUsers}
-        handleLogin={handleLogin}
-      />
+      <>
+        <AccessDenied
+          currentUser={currentUser}
+          onGoHome={() => {
+            window.location.hash = '#/customer';
+            setHash('#/customer');
+          }}
+          onGoToDelivery={() => {
+            window.location.hash = '#/customer';
+            setHash('#/customer');
+          }}
+          onSwitchUser={() => setModal('switchUser')}
+        />
+        {modal === 'switchUser' && (
+          <SwitchUserModal
+            current={currentUser}
+            users={users}
+            onSelect={handleLogin}
+            onLogout={handleLogout}
+            close={() => setModal(null)}
+          />
+        )}
+      </>
+    );
+  }
+
+  // ROUTE GUARD: If role is CUSTOMER: render dedicated Customer App!
+  if (currentUser?.role === 'customer') {
+    return (
+      <>
+        <CustomerApp
+          currentUser={currentUser}
+          handleLogout={handleLogout}
+          onSwitchUser={() => setModal('switchUser')}
+          notify={notify}
+        />
+        {modal === 'switchUser' && (
+          <SwitchUserModal
+            current={currentUser}
+            users={users}
+            onSelect={handleLogin}
+            onLogout={handleLogout}
+            close={() => setModal(null)}
+          />
+        )}
+      </>
+    );
+  }
+
+  // ROUTE GUARD: If role is DELIVERY PARTNER and hash is #/admin: AccessDenied screen!
+  if (currentUser?.role === 'delivery' && (hash === '#/admin' || hash.startsWith('#/admin'))) {
+    return (
+      <>
+        <AccessDenied
+          currentUser={currentUser}
+          onGoToDelivery={() => {
+            window.location.hash = '#/delivery';
+            setHash('#/delivery');
+          }}
+          onSwitchUser={() => setModal('switchUser')}
+        />
+        {modal === 'switchUser' && (
+          <SwitchUserModal
+            current={currentUser}
+            users={users}
+            onSelect={handleLogin}
+            onLogout={handleLogout}
+            close={() => setModal(null)}
+          />
+        )}
+      </>
+    );
+  }
+
+  // If role is DELIVERY PARTNER: render ONLY the dedicated mobile Delivery Partner App!
+  if (currentUser?.role === 'delivery') {
+    return (
+      <>
+        <DeliveryPartnerApp
+          currentUser={currentUser}
+          handleLogout={handleLogout}
+          onSwitchUser={() => setModal('switchUser')}
+          notify={notify}
+        />
+        {modal === 'switchUser' && (
+          <SwitchUserModal
+            current={currentUser}
+            users={users}
+            onSelect={handleLogin}
+            onLogout={handleLogout}
+            close={() => setModal(null)}
+          />
+        )}
+      </>
     );
   }
 
@@ -1004,335 +1191,7 @@ function Delivery({ orders, personalHistory, deliveryAgent, setDeliveryModal }) 
   );
 }
 
-/* ===================================================================
-   STANDALONE DELIVERY PARTNER MINI-APP (Restricted Mobile-First Experience)
-   =================================================================== */
-function DeliveryPartnerApp({
-  currentUser,
-  orders,
-  personalHistory,
-  activities,
-  deliveryModal,
-  setDeliveryModal,
-  completeDelivery,
-  handleLogout,
-  onSwitchUser,
-  notify,
-  notice,
-  modal,
-  setModal,
-  initialUsers,
-  handleLogin
-}) {
-  const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'personal'
-  const [orderFilter, setOrderFilter] = useState('ready'); // 'ready' | 'all'
-
-  const readyOrders = orders.filter(
-    (o) => o.status === 'Ready for Dispatch' || o.status === 'Ready for dispatch'
-  );
-  const displayedOrders = orderFilter === 'ready' ? readyOrders : orders;
-
-  // STRICT DATA ISOLATION: Delivery partner only sees their own delivered records!
-  const myHistory = personalHistory.filter((item) => item.partnerId === currentUser.id);
-  const totalDeliveredMonth = myHistory.length;
-  const totalAmountCollected = myHistory.reduce((sum, item) => sum + Number(item.amount), 0);
-  const monthlyTarget = currentUser.monthlyTarget || 35;
-  const targetPct = Math.min(100, Math.round((totalDeliveredMonth / monthlyTarget) * 100));
-
-  return (
-    <div className="partner-app-shell">
-      {/* Top Standalone Header */}
-      <header className="partner-header">
-        <div className="partner-header-top">
-          <div className="partner-id-wrap">
-            <div className="partner-avatar">{currentUser.avatar}</div>
-            <div>
-              <div className="partner-name-row">
-                <h3>{currentUser.name}</h3>
-                <span className="partner-id-chip">{currentUser.id}</span>
-              </div>
-              <p className="partner-vehicle-text">{currentUser.vehicle}</p>
-            </div>
-          </div>
-          <div className="partner-header-actions">
-            <button type="button" className="partner-switch-pill" onClick={onSwitchUser} title="Switch User Role">
-              <UserCheck size={14} />
-              <span>Switch</span>
-            </button>
-            <button type="button" className="partner-logout-pill" onClick={handleLogout} title="Sign Out">
-              <LogOut size={14} />
-              <span>Exit</span>
-            </button>
-          </div>
-        </div>
-
-        <div className="partner-status-bar">
-          <span className="partner-live-pill"><i /> Active on Shift</span>
-          <span className="partner-date-text"><Clock3 size={12} /> Today, 22 Sep 2026</span>
-          <span className="partner-role-indicator">Delivery Partner</span>
-        </div>
-      </header>
-
-      {/* Main Content Area */}
-      <main className="partner-content">
-        {/* Sub-Tabs Switcher */}
-        <div className="partner-tabs-card">
-          <button
-            type="button"
-            className={`partner-tab-btn ${activeTab === 'orders' ? 'active' : ''}`}
-            onClick={() => setActiveTab('orders')}
-          >
-            <Truck size={17} />
-            <span>Orders for Delivery</span>
-            <span className="tab-pill">{readyOrders.length}</span>
-          </button>
-          <button
-            type="button"
-            className={`partner-tab-btn ${activeTab === 'personal' ? 'active' : ''}`}
-            onClick={() => setActiveTab('personal')}
-          >
-            <UserCheck size={17} />
-            <span>My Personal Record</span>
-            <span className="tab-pill personal-pill">{totalDeliveredMonth}</span>
-          </button>
-        </div>
-
-        {/* Tab 1: Orders for Delivery */}
-        {activeTab === 'orders' && (
-          <section className="delivery-orders-section">
-            <div className="delivery-toolbar">
-              <div className="toolbar-info">
-                <h3>Dispatch Ready Orders</h3>
-                <p>Tap an order below to inspect delivery details and complete drop</p>
-              </div>
-              <div className="delivery-filter-pills">
-                <button
-                  type="button"
-                  className={orderFilter === 'ready' ? 'pill-active' : ''}
-                  onClick={() => setOrderFilter('ready')}
-                >
-                  Ready Only ({readyOrders.length})
-                </button>
-                <button
-                  type="button"
-                  className={orderFilter === 'all' ? 'pill-active' : ''}
-                  onClick={() => setOrderFilter('all')}
-                >
-                  All Orders ({orders.length})
-                </button>
-              </div>
-            </div>
-
-            {displayedOrders.length === 0 ? (
-              <div className="empty-state panel">
-                <Package size={36} color="#1a9b91" />
-                <b>No orders waiting for delivery</b>
-                <p>All eligible orders have been dispatched or completed.</p>
-              </div>
-            ) : (
-              <div className="delivery-cards-grid">
-                {displayedOrders.map((order) => {
-                  const isReady = order.status === 'Ready for Dispatch' || order.status === 'Ready for dispatch';
-                  const isDelivered = order.status === 'Delivered';
-
-                  return (
-                    <div
-                      key={order.id}
-                      className={`delivery-order-card panel ${isReady ? 'card-ready' : ''}`}
-                      onClick={() => setDeliveryModal({ step: 'detail', order })}
-                    >
-                      <div className="order-card-header">
-                        <div>
-                          <span className="order-code">{order.id}</span>
-                          <span className="order-date">{order.date}</span>
-                        </div>
-                        <StatusBadge status={order.status} />
-                      </div>
-
-                      <div className="order-customer-box">
-                        <div className="customer-avatar-small">
-                          {order.customer.split(' ').map((x) => x[0]).join('').slice(0, 2)}
-                        </div>
-                        <div className="customer-text">
-                          <b>{order.customer}</b>
-                          <span><Phone size={12} /> {order.phone || '+91 98765 00000'}</span>
-                        </div>
-                      </div>
-
-                      <div className="order-product-badge">
-                        <Package size={15} />
-                        <span className="product-title">{order.product}</span>
-                        <strong className="qty-tag">{order.quantity} PCS</strong>
-                      </div>
-
-                      <div className="order-address-snippet">
-                        <MapPin size={13} />
-                        <span>{order.address || 'Auto Nagar, Vijayawada, Andhra Pradesh'}</span>
-                      </div>
-
-                      <div className="order-card-footer">
-                        <div className="order-amount-box">
-                          <small>Order Value</small>
-                          <strong>{money(order.amount)}</strong>
-                        </div>
-                        {isDelivered ? (
-                          <span className="delivered-tag">
-                            <CheckCircle2 size={15} /> Delivered ({order.paymentMethod || 'Paid'})
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            className="take-order-btn"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeliveryModal({ step: 'detail', order });
-                            }}
-                          >
-                            <span>Take this order for delivery</span>
-                            <ArrowRight size={15} />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* Tab 2: My Personal Record */}
-        {activeTab === 'personal' && (
-          <section className="delivery-personal-section">
-            <div className="agent-hero-card panel">
-              <div className="agent-identity">
-                <div className="agent-avatar">{currentUser.avatar}</div>
-                <div>
-                  <div className="agent-title-row">
-                    <h2>{currentUser.name}</h2>
-                    <span className="agent-badge-id">{currentUser.id}</span>
-                    <span className="online-pill"><i /> Active Shift</span>
-                  </div>
-                  <p className="agent-role">{currentUser.title} · {currentUser.vehicle}</p>
-                </div>
-              </div>
-              <div className="agent-quick-contact">
-                <span><Phone size={13} /> {currentUser.phone}</span>
-                <span className="star-rating"><Star size={13} fill="#e9a23b" color="#e9a23b" /> {currentUser.rating}</span>
-              </div>
-            </div>
-
-            {/* Monthly Stats Cards */}
-            <div className="personal-stats-grid">
-              <div className="personal-stat-card tone-teal">
-                <div className="p-stat-icon"><Truck size={20} /></div>
-                <div className="p-stat-info">
-                  <small>Delivered This Month</small>
-                  <strong>{totalDeliveredMonth} Orders</strong>
-                  <span>Target: {monthlyTarget} ({targetPct}%)</span>
-                </div>
-              </div>
-
-              <div className="personal-stat-card tone-green">
-                <div className="p-stat-icon"><Banknote size={20} /></div>
-                <div className="p-stat-info">
-                  <small>My Collections</small>
-                  <strong>{money(totalAmountCollected)}</strong>
-                  <span>Direct customer receipts</span>
-                </div>
-              </div>
-
-              <div className="personal-stat-card tone-blue">
-                <div className="p-stat-icon"><Clock3 size={20} /></div>
-                <div className="p-stat-info">
-                  <small>Avg Drop Time</small>
-                  <strong>36 Mins</strong>
-                  <span>On-time dispatch rate: 99.1%</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Delivered Orders History */}
-            <div className="panel personal-history-panel">
-              <div className="history-header">
-                <div>
-                  <h3>My Monthly Delivery History</h3>
-                  <span className="muted">Log of all drops completed by {currentUser.name}</span>
-                </div>
-                <span className="count-tag">{myHistory.length} completed</span>
-              </div>
-
-              {myHistory.length === 0 ? (
-                <div className="empty-state-mini">
-                  <Package size={24} color="#1a9b91" />
-                  <p>No delivered orders recorded under your ID yet this month.</p>
-                </div>
-              ) : (
-                <div className="history-list">
-                  {myHistory.map((item, idx) => (
-                    <div key={`${item.id}-${idx}`} className="history-item">
-                      <div className="history-icon">
-                        <CheckCircle2 size={18} />
-                      </div>
-                      <div className="history-main">
-                        <div className="history-line-1">
-                          <b>{item.customer}</b>
-                          <span className="history-order-id">{item.id}</span>
-                          <span className={`payment-pill ${item.paymentMethod ? item.paymentMethod.toLowerCase() : 'cash'}`}>
-                            {item.paymentMethod || 'Cash'}
-                          </span>
-                        </div>
-                        <div className="history-line-2">
-                          <span>{item.product} · {item.quantity ? `${item.quantity} PCS` : ''}</span>
-                          <span className="dot-sep">•</span>
-                          <span>{item.address}</span>
-                        </div>
-                      </div>
-                      <div className="history-amount">
-                        <strong>{money(item.amount)}</strong>
-                        <small>{item.deliveredAt}</small>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </section>
-        )}
-      </main>
-
-      {/* Floating toast */}
-      {notice && <div className="toast"><Check size={17} />{notice}</div>}
-
-      {/* Modals for Delivery Partner */}
-      {modal === 'switchUser' && (
-        <SwitchUserModal
-          current={currentUser}
-          users={initialUsers}
-          onSelect={handleLogin}
-          onLogout={handleLogout}
-          close={() => setModal(null)}
-        />
-      )}
-
-      {deliveryModal?.step === 'detail' && (
-        <DeliveryDetailModal
-          order={deliveryModal.order}
-          close={() => setDeliveryModal(null)}
-          onDelivered={() => setDeliveryModal({ step: 'payment', order: deliveryModal.order })}
-        />
-      )}
-      {deliveryModal?.step === 'payment' && (
-        <DeliveryPaymentModal
-          order={deliveryModal.order}
-          close={() => setDeliveryModal(null)}
-          onBack={() => setDeliveryModal({ step: 'detail', order: deliveryModal.order })}
-          onConfirmPayment={(method) => completeDelivery(deliveryModal.order, method)}
-        />
-      )}
-    </div>
-  );
-}
+/* DeliveryPartnerApp is imported from ./delivery/DeliveryPartnerApp.jsx */
 
 /* ===================================================================
    ADMIN: DELIVERY MONITORING & RECONCILIATION COMPONENT
@@ -1716,11 +1575,23 @@ function PartnerDrilldownModal({ partner, personalHistory, close, notify }) {
    SWITCH USER / ROLE SELECTION MODAL
    =================================================================== */
 function SwitchUserModal({ current, users, onSelect, onLogout, close }) {
+  const getRoleBadge = (role) => {
+    if (role === 'admin') return '👑 Admin';
+    if (role === 'delivery') return '🚚 Delivery Partner';
+    return '🛒 Customer';
+  };
+
+  const getPresetClass = (role) => {
+    if (role === 'admin') return 'preset-admin';
+    if (role === 'delivery') return 'preset-delivery';
+    return 'preset-customer';
+  };
+
   return (
     <ModalShell title="Switch User Role / Persona" close={close} width="520px">
       <div className="modal-body switch-user-body">
         <p className="switch-user-intro">
-          Select a role below to test access control and permissions:
+          Select a role below to test access control and workflows across all 3 user personas:
         </p>
 
         <div className="presets-list">
@@ -1730,7 +1601,7 @@ function SwitchUserModal({ current, users, onSelect, onLogout, close }) {
               <button
                 key={u.id}
                 type="button"
-                className={`preset-btn ${u.role === 'admin' ? 'preset-admin' : 'preset-delivery'} ${isCurrent ? 'current-active' : ''}`}
+                className={`preset-btn ${getPresetClass(u.role)} ${isCurrent ? 'current-active' : ''}`}
                 onClick={() => {
                   onSelect(u);
                   close();
@@ -1741,11 +1612,11 @@ function SwitchUserModal({ current, users, onSelect, onLogout, close }) {
                   <div className="preset-name-row">
                     <strong>{u.name}</strong>
                     <span className={`preset-role-pill ${u.role}`}>
-                      {u.role === 'admin' ? '👑 Admin' : '🚚 Delivery Partner'}
+                      {getRoleBadge(u.role)}
                     </span>
                     {isCurrent && <span className="current-badge">Current</span>}
                   </div>
-                  <small>{u.title} · {u.vehicle || u.email}</small>
+                  <small>{u.title} · {u.vehicle || u.address || u.email}</small>
                 </div>
                 <ArrowRight size={16} className="preset-arrow" />
               </button>
@@ -1772,6 +1643,18 @@ function LoginScreen({ onLogin, users }) {
   const [selectedUser, setSelectedUser] = useState(users[0]);
   const [email, setEmail] = useState(users[0].email);
   const [password, setPassword] = useState('password123');
+
+  const getRoleBadge = (role) => {
+    if (role === 'admin') return '👑 Admin';
+    if (role === 'delivery') return '🚚 Delivery Partner';
+    return '🛒 Customer';
+  };
+
+  const getPresetClass = (role) => {
+    if (role === 'admin') return 'preset-admin';
+    if (role === 'delivery') return 'preset-delivery';
+    return 'preset-customer';
+  };
 
   const handleSelectPreset = (user) => {
     setSelectedUser(user);
@@ -1802,7 +1685,7 @@ function LoginScreen({ onLogin, users }) {
         {/* 1-Tap Quick Demo Personas */}
         <div className="login-presets">
           <div className="login-presets-label">
-            <span>SELECT ROLE TO ENTER DEMO (1-TAP)</span>
+            <span>SELECT ROLE TO ENTER DEMO (1-TAP 3-WAY WORKFLOW)</span>
           </div>
 
           <div className="presets-list">
@@ -1810,7 +1693,7 @@ function LoginScreen({ onLogin, users }) {
               <button
                 key={u.id}
                 type="button"
-                className={`preset-btn ${u.role === 'admin' ? 'preset-admin' : 'preset-delivery'}`}
+                className={`preset-btn ${getPresetClass(u.role)}`}
                 onClick={() => handleSelectPreset(u)}
               >
                 <div className="preset-avatar">{u.avatar}</div>
@@ -1818,10 +1701,10 @@ function LoginScreen({ onLogin, users }) {
                   <div className="preset-name-row">
                     <strong>{u.name}</strong>
                     <span className={`preset-role-pill ${u.role}`}>
-                      {u.role === 'admin' ? '👑 Admin' : '🚚 Delivery Partner'}
+                      {getRoleBadge(u.role)}
                     </span>
                   </div>
-                  <small>{u.title} · {u.vehicle || u.email}</small>
+                  <small>{u.title} · {u.vehicle || u.address || u.email}</small>
                 </div>
                 <ArrowRight size={16} className="preset-arrow" />
               </button>
