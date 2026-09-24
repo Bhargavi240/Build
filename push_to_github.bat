@@ -32,7 +32,7 @@ git commit -m "Update BuildStock: full App.jsx, mobile view, and Cloudflare conf
 echo.
 echo [4/4] Connecting to remote and pushing...
 git remote remove origin 2>nul
-git remote add origin https://github.com/Bhargavi240/build-stock.git
+git remote add origin https://github.com/PamarthiBhargavi/build-stockkk.git
 git push -u origin main
 
 if %errorlevel% neq 0 (

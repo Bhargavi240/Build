@@ -38,7 +38,7 @@ echo ========================================================
 echo [4/5] Setting remote repository URL...
 echo ========================================================
 git remote remove origin 2>nul
-git remote add origin https://github.com/Bhargavi240/build-stock.git
+git remote add origin https://github.com/PamarthiBhargavi/build-stockkk.git
 git remote -v
 
 echo.
